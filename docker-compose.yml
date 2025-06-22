@@ -1,0 +1,507 @@
+version: '3.8'
+
+services:
+  # Database Services
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: awm-timescaledb
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-trading_db}
+      POSTGRES_USER: ${POSTGRES_USER:-trading_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: awm-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  # Layer 1: Data & Tooling Layer (MCP Servers)
+  market-data-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/market_data/Dockerfile
+    container_name: awm-market-data-server
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MCP_PORT=8001
+    ports:
+      - "8001:8001"
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  technical-analysis-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/technical_analysis/Dockerfile
+    container_name: awm-technical-analysis-server
+    environment:
+      - MCP_PORT=8002
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8002:8002"
+    depends_on:
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  portfolio-management-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/portfolio_management/Dockerfile
+    container_name: awm-portfolio-management-server
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MCP_PORT=8003
+    ports:
+      - "8003:8003"
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  risk-assessment-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/risk_assessment/Dockerfile
+    container_name: awm-risk-assessment-server
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MCP_PORT=8004
+    ports:
+      - "8004:8004"
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  trade-execution-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/trade_execution/Dockerfile
+    container_name: awm-trade-execution-server
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ZERODHA_API_KEY=${ZERODHA_API_KEY}
+      - ZERODHA_API_SECRET=${ZERODHA_API_SECRET}
+      - ZERODHA_ACCESS_TOKEN=${ZERODHA_ACCESS_TOKEN}
+      - MCP_PORT=8005
+    ports:
+      - "8005:8005"
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  news-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/news/Dockerfile
+    container_name: awm-news-server
+    environment:
+      - NEWS_API_KEY=${NEWS_API_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MCP_PORT=8006
+    ports:
+      - "8006:8006"
+    depends_on:
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  llm-market-intelligence-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/llm_market_intelligence/Dockerfile
+    container_name: awm-llm-market-intelligence-server
+    environment:
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-mistralai/Mistral-7B-Instruct-v0.2}
+      - LLM_MODEL_PATH=/app/models
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2048}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.1}
+      - LLM_GPU_MEMORY_FRACTION=${LLM_GPU_MEMORY_FRACTION:-0.8}
+      - LLM_TENSOR_PARALLEL_SIZE=${LLM_TENSOR_PARALLEL_SIZE:-1}
+      - SENTIMENT_CONFIDENCE_THRESHOLD=${SENTIMENT_CONFIDENCE_THRESHOLD:-0.7}
+      - MAX_NEWS_ARTICLES=${MAX_NEWS_ARTICLES:-50}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CACHE_TTL=${CACHE_TTL:-300}
+    ports:
+      - "8007:8007"
+    depends_on:
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  quantitative-analysis-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/quantitative_analysis/Dockerfile
+    container_name: awm-quantitative-analysis-server
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8003:8003"
+    depends_on:
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  signal-generation-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/signal_generation/Dockerfile
+    container_name: awm-signal-generation-server
+    environment:
+      - QUANTITATIVE_ANALYSIS_SERVER_URL=http://quantitative-analysis-server:8003
+      - TECHNICAL_ANALYSIS_SERVER_URL=http://technical-analysis-server:8002
+      - MARKET_DATA_SERVER_URL=http://market-data-server:8001
+      - NEWS_SERVER_URL=http://news-server:8006
+      - LLM_MARKET_INTELLIGENCE_SERVER_URL=http://llm-market-intelligence-server:8007
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8004:8004"
+    depends_on:
+      - quantitative-analysis-server
+      - technical-analysis-server
+      - market-data-server
+      - llm-market-intelligence-server
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  decision-engine-server:
+    build:
+      context: .
+      dockerfile: services/mcp_servers/decision_engine/Dockerfile
+    container_name: awm-decision-engine-server
+    environment:
+      - SIGNAL_GENERATION_SERVER_URL=http://signal-generation-server:8004
+      - RISK_MANAGEMENT_ENGINE_URL=http://risk-management-engine:8010
+      - PORTFOLIO_MANAGEMENT_SYSTEM_URL=http://portfolio-management-system:8012
+      - MARKET_DATA_SERVER_URL=http://market-data-server:8001
+      - LLM_MARKET_INTELLIGENCE_SERVER_URL=http://llm-market-intelligence-server:8007
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8005:8005"
+    depends_on:
+      - signal-generation-server
+      - llm-market-intelligence-server
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  # Layer 2: Intelligence Layer (AI Agents)
+  market-analysis-agent:
+    build:
+      context: .
+      dockerfile: services/agents/market_analysis/Dockerfile
+    container_name: awm-market-analysis-agent
+    environment:
+      - MARKET_DATA_SERVER_URL=http://market-data-server:8001
+      - TECHNICAL_ANALYSIS_SERVER_URL=http://technical-analysis-server:8002
+      - NEWS_SERVER_URL=http://news-server:8006
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - market-data-server
+      - technical-analysis-server
+      - news-server
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  risk-assessment-agent:
+    build:
+      context: .
+      dockerfile: services/agents/risk_assessment/Dockerfile
+    container_name: awm-risk-assessment-agent
+    environment:
+      - RISK_ASSESSMENT_SERVER_URL=http://risk-assessment-server:8004
+      - PORTFOLIO_MANAGEMENT_SERVER_URL=http://portfolio-management-server:8003
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - risk-assessment-server
+      - portfolio-management-server
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  strategy-optimization-agent:
+    build:
+      context: .
+      dockerfile: services/agents/strategy_optimization/Dockerfile
+    container_name: awm-strategy-optimization-agent
+    environment:
+      - MARKET_DATA_SERVER_URL=http://market-data-server:8001
+      - TECHNICAL_ANALYSIS_SERVER_URL=http://technical-analysis-server:8002
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - market-data-server
+      - technical-analysis-server
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  trade-execution-agent:
+    build:
+      context: .
+      dockerfile: services/agents/trade_execution/Dockerfile
+    container_name: awm-trade-execution-agent
+    environment:
+      - TRADE_EXECUTION_SERVER_URL=http://trade-execution-server:8005
+      - PORTFOLIO_MANAGEMENT_SERVER_URL=http://portfolio-management-server:8003
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - trade-execution-server
+      - portfolio-management-server
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  autonomous-trading-agent:
+    build:
+      context: .
+      dockerfile: services/agents/autonomous_trading/Dockerfile
+    container_name: awm-autonomous-trading-agent
+    environment:
+      - SIGNAL_GENERATION_SERVER_URL=http://signal-generation-server:8004
+      - DECISION_ENGINE_SERVER_URL=http://decision-engine-server:8005
+      - RISK_MANAGEMENT_ENGINE_URL=http://risk-management-engine:8010
+      - OMS_URL=http://order-management-system:8011
+      - PORTFOLIO_MANAGEMENT_SYSTEM_URL=http://portfolio-management-system:8012
+      - LLM_MARKET_INTELLIGENCE_SERVER_URL=http://llm-market-intelligence-server:8007
+      - AUTONOMOUS_TRADING_ENABLED=${AUTONOMOUS_TRADING_ENABLED:-false}
+      - PAPER_TRADING_ONLY=${PAPER_TRADING_ONLY:-true}
+      - SCAN_INTERVAL_SECONDS=${SCAN_INTERVAL_SECONDS:-300}
+      - DECISION_CONFIG=${DECISION_CONFIG:-moderate}
+      - MAX_DAILY_TRADES=${MAX_DAILY_TRADES:-10}
+      - DEFAULT_PORTFOLIO_ID=${DEFAULT_PORTFOLIO_ID:-default-portfolio-id}
+      - TRADING_WATCHLIST=${TRADING_WATCHLIST:-RELIANCE,TCS,HDFCBANK,INFY,HINDUNILVR}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - signal-generation-server
+      - decision-engine-server
+      - risk-management-engine
+      - order-management-system
+      - portfolio-management-system
+      - llm-market-intelligence-server
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  # Layer 3: Execution & Risk Layer
+  risk-management-engine:
+    build:
+      context: .
+      dockerfile: services/execution/risk_management/Dockerfile
+    container_name: awm-risk-management-engine
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MAX_POSITION_SIZE=${MAX_POSITION_SIZE:-100000}
+      - MAX_DAILY_LOSS=${MAX_DAILY_LOSS:-10000}
+      - MAX_PORTFOLIO_RISK=${MAX_PORTFOLIO_RISK:-0.02}
+    ports:
+      - "8010:8010"
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  order-management-system:
+    build:
+      context: .
+      dockerfile: services/execution/oms/Dockerfile
+    container_name: awm-oms
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ZERODHA_API_KEY=${ZERODHA_API_KEY}
+      - ZERODHA_API_SECRET=${ZERODHA_API_SECRET}
+      - ZERODHA_ACCESS_TOKEN=${ZERODHA_ACCESS_TOKEN}
+      - RISK_MANAGEMENT_ENGINE_URL=http://risk-management-engine:8010
+    ports:
+      - "8011:8011"
+    depends_on:
+      - timescaledb
+      - redis
+      - risk-management-engine
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  portfolio-management-system:
+    build:
+      context: .
+      dockerfile: services/execution/portfolio_management/Dockerfile
+    container_name: awm-portfolio-management-system
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8012:8012"
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  # Layer 4: Control & Oversight Layer
+  dashboard:
+    build:
+      context: .
+      dockerfile: services/dashboard/Dockerfile
+    container_name: awm-dashboard
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OMS_URL=http://order-management-system:8011
+      - PORTFOLIO_MANAGEMENT_URL=http://portfolio-management-system:8012
+      - RISK_MANAGEMENT_URL=http://risk-management-engine:8010
+    ports:
+      - "8501:8501"
+    depends_on:
+      - timescaledb
+      - redis
+      - order-management-system
+      - portfolio-management-system
+      - risk-management-engine
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+  alerting-service:
+    build:
+      context: .
+      dockerfile: services/alerting/Dockerfile
+    container_name: awm-alerting-service
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-trading_db}
+      - POSTGRES_USER=${POSTGRES_USER:-trading_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+    ports:
+      - "8013:8013"
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - awm-network
+    restart: unless-stopped
+
+volumes:
+  timescale_data:
+  redis_data:
+
+networks:
+  awm-network:
+    driver: bridge
